@@ -2,15 +2,20 @@
 .venv/
 venv/
 env/
+ENV/
+env.bak/
+venv.bak/
 
 # Python
 __pycache__/
-*.py[cod]
-*.pyo
-*.pyd
+*.py[codz]
+*$py.class
+*.so
 *.egg-info/
+*.egg
 dist/
 build/
+MANIFEST
 
 # YOLO model weights — large binaries, download on first run
 *.pt
@@ -26,3 +31,16 @@ clips/
 .idea/
 .vscode/
 *.swp
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+
+# Test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Misc
+.env
+.envrc
