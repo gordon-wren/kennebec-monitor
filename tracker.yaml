@@ -1,0 +1,22 @@
+tracker_type: botsort
+
+# Lowered from default 0.25 to match our confidence_threshold
+track_high_thresh: 0.35
+track_low_thresh: 0.1
+new_track_thresh: 0.4
+
+# At 30fps: 150 = 5s, 300 = 10s. Increase if boats are being re-IDed after
+# brief detection gaps (waves, glare, partial occlusion).
+track_buffer: 150
+
+match_thresh: 0.8
+fuse_score: true
+
+# Global motion compensation — handles slight camera movement between frames
+gmc_method: sparseOptFlow
+
+# ReID settings (disabled — not needed for single fixed camera)
+proximity_thresh: 0.5
+appearance_thresh: 0.8
+with_reid: false
+model: auto
