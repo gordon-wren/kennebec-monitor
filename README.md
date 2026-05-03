@@ -73,17 +73,21 @@ Each detected vessel gets its own subdirectory containing a video clip, a thumbn
 
 ```
 clips/
-└── 2026-05-02/
-    └── track_6_012714/
-        ├── clip.mp4        — full recording with pre-event buffer
-        ├── thumb.jpg       — frame from the first detection
-        └── metadata.json
+└── cam1/
+    └── 2026-05-02/
+        ├── summary.json    — daily activity summary for this camera
+        └── track_6_012714/
+            ├── clip.mp4        — full recording with pre-event buffer
+            ├── thumb.jpg       — frame from the first detection
+            ├── metadata.json
+            └── ais.json        — nearby AIS vessels at detection time (if enabled)
 ```
 
 ### metadata.json
 
 ```json
 {
+  "camera_id": "cam1",
   "track_id": 6,
   "started_at": "2026-05-02T01:27:14.192345+00:00",
   "ended_at": "2026-05-02T01:29:18.723945+00:00",
@@ -136,6 +140,50 @@ All settings are in `config.py`.
 | `output_dir` | `clips` | Root directory for saved clips |
 | `output_resolution` | `(1920, 1080)` | Recording resolution |
 | `video_codec` | `mp4v` | `avc1` gives smaller H.264 files on macOS |
+
+### AIS vessel enrichment
+
+When a new vessel is detected, boat-detector can query [AISstream.io](https://aisstream.io) for any AIS-transmitting vessels near the camera. Results are written to `ais.json` in the clip directory and uploaded to R2 alongside the clip.
+
+| Setting | Default | Description |
+|---|---|---|
+| `ais_enabled` | `False` | Set to `True` to enable AIS queries |
+| `ais_api_key` | `""` | AISstream.io API key (free tier available) |
+| `camera_latitude` | `0.0` | Camera latitude in decimal degrees |
+| `camera_longitude` | `0.0` | Camera longitude in decimal degrees |
+| `ais_bounding_box_deg` | `0.05` | Half-width of the query bounding box in degrees (~5.5 km at mid-latitudes) |
+| `ais_query_seconds` | `30.0` | How long to collect AIS messages per detection event |
+
+#### ais.json format
+
+```json
+{
+  "query_at": "2026-05-02T01:27:14+00:00",
+  "camera_lat": 44.2374,
+  "camera_lon": -69.7626,
+  "bounding_box_deg": 0.05,
+  "vessels": [
+    {
+      "mmsi": "338234567",
+      "name": "KENNEBEC PILOT",
+      "ship_type": 52,
+      "call_sign": "WDG2345",
+      "destination": "BATH",
+      "lat": 44.239,
+      "lon": -69.761,
+      "speed_knots": 8.4,
+      "course": 270.0,
+      "heading": 268,
+      "nav_status": 0,
+      "timestamp": "2026-05-02T01:27:12Z"
+    }
+  ]
+}
+```
+
+AIS only covers vessels that carry an AIS transponder — commercially required for vessels over 300 GT and passenger vessels. Recreational boats, kayaks, and small craft typically do not transmit AIS. If the clip's vessel does not appear in `ais.json`, it was either out of transponder range or not required to carry one.
+
+> **Option B — RTL-SDR local receiver:** For offline or low-latency AIS decoding without a cloud API, see the companion project [`kennebec-ais-catcher`](../kennebec-ais-catcher). It runs an RTL-SDR USB dongle (~$25) through [AIS-catcher](https://github.com/jvde-github/AIS-catcher) to decode AIS on VHF 161.975 / 162.025 MHz, then serves a REST API on the local network. Set `ais_local_url = "http://127.0.0.1:8080/vessels"` in this project's `config.py` to use it instead of AISstream.io — no `ais_api_key` required. This works entirely offline with zero per-message cost, but requires a VHF antenna with line-of-sight to the river (~10–20 NM range for Class A transponders).
 
 ### Upload
 

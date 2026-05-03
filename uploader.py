@@ -59,7 +59,7 @@ def _upload(clip_dir: Path) -> None:
             region_name="auto",
         )
         uploaded = []
-        for filename in ("clip.mp4", "metadata.json", "thumb.jpg"):
+        for filename in ("clip.mp4", "metadata.json", "thumb.jpg", "ais.json"):
             local = clip_dir / filename
             if not local.exists():
                 continue

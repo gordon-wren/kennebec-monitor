@@ -10,6 +10,7 @@ from typing import Optional
 import cv2
 import numpy as np
 
+from ais import enrich_clip as _ais_enrich
 from config import config
 from detector import Detection
 from uploader import upload_clip
@@ -185,6 +186,7 @@ class ClipRecorder:
 
         self._active[track_id] = state
         logger.info("Started clip for track %d → %s", track_id, clip_path)
+        _ais_enrich(clip_dir)
 
     def _finalize_track(self, track_id: int, now: datetime) -> None:
         state = self._active.pop(track_id)

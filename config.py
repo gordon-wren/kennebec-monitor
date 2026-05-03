@@ -108,6 +108,24 @@ class Config:
     notify_webhook_url: str = ""         # https://your-endpoint.example.com/hook
     notify_min_confidence: float = 0.35  # skip notification if all detections below this
 
+    # AIS vessel enrichment — correlate detections with nearby vessels via AISstream.io.
+    # Sign up at https://aisstream.io for a free API key (global AIS coverage).
+    # Set camera_latitude / camera_longitude to the deployment position; the query
+    # fetches all AIS-transmitting vessels within ±ais_bounding_box_deg of that point.
+    ais_enabled: bool = False
+    # Option A — AISstream.io cloud API (requires internet, free tier available)
+    ais_api_key: str = ""              # AISstream.io API key
+    # Option B — kennebec-ais-catcher local relay server
+    # Set to the server URL to use local RTL-SDR data instead of AISstream.io.
+    # Example (same machine): "http://127.0.0.1:8080/vessels"
+    # Example (LAN):          "http://192.168.1.50:8080/vessels"
+    # When set, ais_api_key is ignored.
+    ais_local_url: str = ""
+    camera_latitude: float = 0.0       # Decimal degrees, e.g. 44.2374
+    camera_longitude: float = 0.0     # Decimal degrees, e.g. -69.7626
+    ais_bounding_box_deg: float = 0.05 # Half-width of query box in degrees (~5.5 km)
+    ais_query_seconds: float = 30.0    # How long to listen per detection event (Option A only)
+
     # Cloudflare R2 upload — populate these and set R2_ACCESS_KEY / R2_SECRET_KEY
     # as environment variables, then flip r2_upload_enabled to True.
     r2_upload_enabled: bool = False
