@@ -1,134 +1,187 @@
 # Boat Detector
 
-Records a clip for each tracked boat detected in a video stream. Uses [YOLOv11](https://docs.ultralytics.com/) for detection and BoT-SORT for per-object tracking. Optimised for Apple Silicon via the MPS backend.
+Records a clip for each tracked boat detected in a live or recorded video stream. Uses [YOLOv11](https://docs.ultralytics.com/) for detection and BoT-SORT for multi-object tracking. Designed for a fixed riverside camera — one clip per vessel, with a pre-event buffer and automatic upload to Cloudflare R2.
 
 ## Requirements
 
 - Python 3.11+
-- A Sony a6700 or a7rV connected in USB Streaming mode, **or** an HDMI capture card (e.g. Elgato Cam Link 4K)
 - macOS on Intel or Apple Silicon (M-series)
+- A PoE IP camera accessible over RTSP (e.g. Reolink RLC-810A), **or** a pre-recorded video file for test mode
 
 ## Installation
 
 ```bash
-# Clone / navigate to the project
 cd boat-detector
-
-# Create and activate a virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
-
-# Install dependencies
 pip install -r requirements.txt
 ```
 
-The first run will download `yolo11s.pt` (~22 MB) automatically.
+The first run downloads `yolo11s.pt` (~22 MB) automatically.
 
 ## Camera setup
 
-### Option A — USB Streaming (simplest)
+### Live mode — RTSP IP camera
 
-1. On the camera: **Menu → Network → USB Streaming → Enable**
-2. Connect the camera to your Mac via USB-C
-3. The camera appears as a UVC webcam at device index `0`
+Connect the camera to your local network via a PoE switch and note its IP address. The RTSP URL format for Reolink cameras is:
 
-### Option B — HDMI capture card (better image quality)
+```
+rtsp://<user>:<password>@<camera-ip>:554/h264Preview_01_main
+```
 
-1. Run an HDMI cable from the camera to your capture card
-2. Connect the capture card to your Mac via USB
-3. The card appears as a UVC device — if index `0` is taken by another webcam, set `camera_index = 1` in `config.py`
+Run:
+
+```bash
+python main.py --camera rtsp://admin:yourpass@192.168.1.100:554/h264Preview_01_main
+```
+
+### Test mode — video file
+
+Feed a pre-recorded clip to tune settings without the camera present. Clips are written to a new numbered directory under `test_clips/` so runs don't overwrite each other.
+
+```bash
+python main.py --input /path/to/footage.mp4
+```
+
+Analyse the output against a known boat count:
+
+```bash
+python analyze_run.py test_clips/run_001 --expected 2
+```
 
 ## Running
 
-### Live mode
-
 ```bash
+# Live camera (UVC device index 0)
 python main.py
+
+# Live camera (RTSP)
+python main.py --camera rtsp://admin:pass@192.168.1.100:554/h264Preview_01_main
+
+# Test file
+python main.py --input footage.mp4
+
+# Test file with periodic background frame prints
+python main.py --input footage.mp4 --background-frames
 ```
 
 Stop with `Ctrl+C`. Any open clips are flushed to disk before exit.
 
-### Test mode
-
-Feed in a pre-recorded video file instead of a live camera. Useful for tuning settings without needing the camera present.
-
-```bash
-python main.py --input /path/to/footage.mp4
-# or
-python main.py -i footage.mp4
-```
-
-Processing runs as fast as the machine allows. Clips are written to the same output directory as live mode.
-
 ## Output
 
-Clips are saved under `clips/` (configurable) with one subdirectory per tracked object:
+Each detected vessel gets its own subdirectory containing a video clip, a thumbnail, and metadata:
 
 ```
 clips/
-└── 2024-06-01/
-    ├── track_3_143022/
-    │   ├── clip.mp4
-    │   └── metadata.json
-    └── track_7_143041/
-        ├── clip.mp4
+└── 2026-05-02/
+    └── track_6_012714/
+        ├── clip.mp4        — full recording with pre-event buffer
+        ├── thumb.jpg       — frame from the first detection
         └── metadata.json
 ```
-
-Each clip includes a 10-second pre-buffer before the first detection, plus all frames until the boat has been absent for `track_loss_timeout_seconds`.
 
 ### metadata.json
 
 ```json
 {
-  "track_id": 3,
-  "started_at": "2024-06-01T14:30:22.100000+00:00",
-  "ended_at": "2024-06-01T14:31:05.800000+00:00",
-  "duration_seconds": 43.7,
-  "frame_count": 1311,
-  "fps": 30.0,
+  "track_id": 6,
+  "started_at": "2026-05-02T01:27:14.192345+00:00",
+  "ended_at": "2026-05-02T01:29:18.723945+00:00",
+  "duration_seconds": 124.532,
+  "frame_count": 1895,
+  "fps": 30.56,
   "resolution": [1920, 1080],
   "clip_path": "clip.mp4",
   "detected_classes": ["boat"],
-  "detection_count": 1244,
-  "confidence_min": 0.5021,
-  "confidence_max": 0.9431,
-  "confidence_mean": 0.7803,
+  "detection_count": 80,
+  "confidence_min": 0.3505,
+  "confidence_max": 0.6430,
+  "confidence_mean": 0.4329,
+  "x_range_px": 545.4,
   "error": null
 }
 ```
 
-`error` is `null` on success. If a clip fails to open or a frame write fails, the error message is recorded here.
+`x_range_px` is the horizontal spread of the vessel's centroid across its lifetime — used to filter static false positives (piers, docks). `error` is `null` on success.
 
 ## Configuration
 
 All settings are in `config.py`.
 
+### Detection
+
 | Setting | Default | Description |
 |---|---|---|
-| `camera_index` | `0` | UVC device index |
+| `model_name` | `yolo11s.pt` | YOLO model variant — `n` is faster, `m`/`l` more accurate |
+| `confidence_threshold` | `0.1` | Pre-filter before BoT-SORT. Keep low so the tracker's second-stage matcher sees weak detections |
+| `target_classes` | `[8]` | COCO class 8 = boat. `None` detects all classes |
+| `device` | `cpu` | `cpu` for Intel; `mps` for Apple Silicon |
+| `inference_every_n_frames` | `6` | Run YOLO every N frames — all frames still written to clips. Higher values improve CPU performance at the cost of detection responsiveness |
+| `max_detection_area_fraction` | `0.10` | Discard detections whose bounding box exceeds this fraction of the frame area. Filters foreground structures (piers, trees) misclassified as boats |
+
+### Tracking
+
+| Setting | Default | Description |
+|---|---|---|
+| `track_loss_timeout_seconds` | `30.0` | Seconds a vessel can be absent (occluded, low confidence) before its clip is closed |
+| `track_merge_proximity` | `0.25` | Fraction of frame diagonal. A new BoT-SORT track ID appearing this close to a lost track is treated as the same vessel |
+| `edge_entry_zone` | `0.15` | Fraction of frame width from each edge. New tracks appearing here are always treated as new vessel entries, never merged into an existing clip |
+| `min_track_displacement_px` | `100.0` | Minimum horizontal centroid range (pixels) across a track's lifetime. Clips below this threshold are discarded as static objects |
+
+### Recording
+
+| Setting | Default | Description |
+|---|---|---|
+| `pre_buffer_seconds` | `20.0` | Seconds of footage prepended to each clip before the first detection |
 | `output_dir` | `clips` | Root directory for saved clips |
-| `output_resolution` | `(1920, 1080)` | Frames are downsampled to this before recording |
+| `output_resolution` | `(1920, 1080)` | Recording resolution |
 | `video_codec` | `mp4v` | `avc1` gives smaller H.264 files on macOS |
-| `model_name` | `yolo11s.pt` | YOLO model — `n` is faster, `m`/`l` are more accurate |
-| `confidence_threshold` | `0.5` | Detections below this are ignored |
-| `target_classes` | `[8]` | COCO class 8 = boat. Set to `None` to detect everything |
-| `device` | `cpu` | `cpu` for Intel Macs; `mps` for Apple Silicon (M-series) |
-| `pre_buffer_seconds` | `10.0` | Seconds of footage captured before the first detection |
-| `track_loss_timeout_seconds` | `5.0` | **Likely needs tuning.** Seconds a boat can be absent before its clip is closed. Too short → fragmented clips. Too long → separate boats merged into one clip. |
+
+### Upload
+
+| Setting | Default | Description |
+|---|---|---|
+| `r2_upload_enabled` | `False` | Set to `True` to upload clips to Cloudflare R2 after finalization |
+| `r2_bucket` | `""` | R2 bucket name |
+| `r2_endpoint` | `""` | `https://<account_id>.r2.cloudflarestorage.com` |
+
+R2 credentials are read from environment variables — do not put them in `config.py`:
+
+```bash
+export R2_ACCESS_KEY=your_key_id
+export R2_SECRET_KEY=your_secret
+```
+
+### Debug
+
+| Setting | Default | Description |
+|---|---|---|
 | `draw_overlay` | `False` | Burn bounding boxes and track IDs into saved clips |
-| `show_preview` | `False` | Show a live preview window (press `q` to quit) |
+| `show_preview` | `False` | Display a live preview window (press `q` to quit) |
+| `snapshot_interval_seconds` | `10.0` | Seconds between background terminal frame prints (requires `--background-frames`) |
+
+## Apple Silicon
+
+Change `device` to `mps` in `config.py` for GPU-accelerated inference on M-series Macs. You can also lower `inference_every_n_frames` to `2` or `3` for more responsive detection:
+
+```python
+device: str = "mps"
+inference_every_n_frames: int = 3
+```
 
 ## Troubleshooting
 
-**Camera not found**
-Ensure the camera is in USB Streaming mode before connecting. Try `camera_index = 1` if another webcam occupies index `0`.
+**No boats detected**
+Lower `confidence_threshold` to `0.05` and check that `target_classes = [8]` matches your vessel type. Run in test mode with `--background-frames` to see what the model is detecting.
 
-**Slow inference / dropped frames**
-Switch to the nano model (`yolo11n.pt`) or lower `output_resolution`. On an Intel Mac, `yolo11n.pt` is recommended for live camera use. On Apple Silicon (`device = "mps"`), `yolo11s.pt` should comfortably handle 1080p30.
+**Clips are fragmented (same vessel produces multiple clips)**
+Increase `track_loss_timeout_seconds`. Also check `tracker.yaml` — `track_buffer` should be at least `timeout × fps` (e.g. 900 at 30fps for a 30s timeout).
 
-**No boats detected in test footage**
-Lower `confidence_threshold` to `0.3` as a starting point. If the footage is aerial or contains unusual vessel types, consider fine-tuning the model on the [SeaDroneSee dataset](https://seadronessee.cs.uni-tuebingen.de/).
+**Static objects saved as clips**
+Lower `max_detection_area_fraction` or raise `min_track_displacement_px`. The displacement filter is the stronger signal: a pier never moves, so its x-range stays near zero.
 
-**Clips are fragmented (boat disappears and reappears)**
-Increase `track_loss_timeout_seconds`. Start with `10` and adjust from there.
+**Slow inference on Intel Mac**
+Switch to the nano model (`yolo11n.pt`) or increase `inference_every_n_frames`. Live camera use on Intel is viable at `inference_every_n_frames = 6` with `yolo11n.pt`.
+
+**RTSP stream drops or lags**
+The stream uses `cv2.CAP_FFMPEG` with a buffer size of 1 to minimise latency. If drops are frequent, check network throughput between the camera and Mac — the main stream at 4K/8MP can be 8–16 Mbps.

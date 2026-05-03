@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd service definition for boat-detector.
+
+  SETUP
+  ─────
+  1. Fill in the paths and credentials below (search for REPLACE_WITH_).
+  2. Create the log directory:
+       mkdir -p /usr/local/var/log/boat-detector
+  3. Install for the current user:
+       cp deployment/com.kennebec-monitor.boat-detector.plist \
+          ~/Library/LaunchAgents/com.kennebec-monitor.boat-detector.plist
+  4. Load and start:
+       launchctl load ~/Library/LaunchAgents/com.kennebec-monitor.boat-detector.plist
+       launchctl start com.kennebec-monitor.boat-detector
+
+  USEFUL COMMANDS
+  ───────────────
+  Check status:   launchctl list | grep kennebec
+  Stop:           launchctl stop com.kennebec-monitor.boat-detector
+  Unload:         launchctl unload ~/Library/LaunchAgents/com.kennebec-monitor.boat-detector.plist
+  View logs:      tail -f /usr/local/var/log/boat-detector/detector.log
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.kennebec-monitor.boat-detector</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <!-- Full path to the Python interpreter inside the venv -->
+        <string>REPLACE_WITH_/path/to/boat-detector/.venv/bin/python</string>
+        <string>REPLACE_WITH_/path/to/boat-detector/main.py</string>
+        <string>--camera</string>
+        <string>REPLACE_WITH_rtsp://admin:password@192.168.1.100:554/h264Preview_01_main</string>
+    </array>
+
+    <!-- Working directory — must be the project root so relative imports resolve -->
+    <key>WorkingDirectory</key>
+    <string>REPLACE_WITH_/path/to/boat-detector</string>
+
+    <!-- R2 upload credentials — never put secrets in source control -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>R2_ACCESS_KEY</key>
+        <string>REPLACE_WITH_your_r2_access_key</string>
+        <key>R2_SECRET_KEY</key>
+        <string>REPLACE_WITH_your_r2_secret_key</string>
+    </dict>
+
+    <!-- Restart automatically if the process exits for any reason -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Wait 10 seconds before restarting after a crash -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Start at login and after reboots -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Redirect stdout/stderr to rotating log files -->
+    <key>StandardOutPath</key>
+    <string>/usr/local/var/log/boat-detector/detector.log</string>
+    <key>StandardErrorPath</key>
+    <string>/usr/local/var/log/boat-detector/detector.error.log</string>
+</dict>
+</plist>

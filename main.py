@@ -1,8 +1,11 @@
 import argparse
 import logging
+import logging.handlers
+import shutil
 import signal
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import cv2
@@ -12,11 +15,24 @@ from config import config
 from detector import BoatDetector
 from recorder import ClipRecorder, _draw_overlay
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
-# Suppress noisy debug output from third-party libraries
+_fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+_console = logging.StreamHandler()
+_console.setFormatter(_fmt)
+
+logging.root.setLevel(logging.DEBUG)
+logging.root.addHandler(_console)
+
+if config.log_file:
+    Path(config.log_file).parent.mkdir(parents=True, exist_ok=True)
+    _file_handler = logging.handlers.RotatingFileHandler(
+        config.log_file,
+        maxBytes=config.log_max_bytes,
+        backupCount=config.log_backup_count,
+    )
+    _file_handler.setFormatter(_fmt)
+    logging.root.addHandler(_file_handler)
+
 logging.getLogger("ultralytics").setLevel(logging.WARNING)
 logging.getLogger("torch").setLevel(logging.WARNING)
 
@@ -32,6 +48,21 @@ def _check_terminal() -> None:
             "Frames will be written but not visible. Download iTerm2 at https://iterm2.com",
             term or "unknown",
         )
+
+
+def _cleanup_old_clips(output_dir: Path) -> None:
+    """Delete clip directories older than config.max_clip_age_days on startup."""
+    if config.max_clip_age_days <= 0 or not output_dir.exists():
+        return
+    cutoff = datetime.now(timezone.utc).timestamp() - config.max_clip_age_days * 86400
+    removed = 0
+    # Clip dirs live at output_dir / camera_id / date / track_*
+    for track_dir in output_dir.rglob("track_*"):
+        if track_dir.is_dir() and track_dir.stat().st_mtime < cutoff:
+            shutil.rmtree(track_dir, ignore_errors=True)
+            removed += 1
+    if removed:
+        logger.info("Cleaned up %d clip(s) older than %d days", removed, config.max_clip_age_days)
 
 
 def _next_test_run_dir() -> Path:
@@ -54,6 +85,8 @@ def run(
 
     if file_mode:
         config.output_dir = _next_test_run_dir()
+    else:
+        _cleanup_old_clips(config.output_dir)
 
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -100,11 +133,24 @@ def run(
         ret, frame = camera.read()
 
         if not ret:
-            if not file_mode:
-                logger.error("Camera read failed — shutting down")
-            else:
+            if file_mode:
                 logger.info("End of input file — flushing clips")
-            break
+                break
+            # Live mode: attempt to reconnect with exponential backoff
+            logger.warning("Camera read failed — attempting reconnect")
+            recorder.flush_all()
+            interval = config.reconnect_interval_seconds
+            while True:
+                logger.info("Reconnecting in %.0fs…", interval)
+                time.sleep(interval)
+                if camera.reconnect():
+                    logger.info("Reconnected to camera")
+                    known_track_ids.clear()
+                    last_detections = []
+                    break
+                interval = min(interval * 2, config.max_reconnect_interval_seconds)
+                logger.warning("Reconnect failed — retrying in %.0fs", interval)
+            continue
 
         frame_count += 1
 

@@ -12,6 +12,7 @@ import numpy as np
 
 from config import config
 from detector import Detection
+from uploader import upload_clip
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,8 @@ class ClipRecorder:
                 cx = (det.bbox_xyxy[0] + det.bbox_xyxy[2]) / 2
                 state.cx_min = min(state.cx_min, cx)
                 state.cx_max = max(state.cx_max, cx)
+                if len(state.detections) == 1:
+                    _save_thumbnail(frame, state.clip_path.parent)
             else:
                 absent_for = (now - state.last_seen_at).total_seconds()
                 if absent_for > config.track_loss_timeout_seconds:
@@ -142,7 +145,7 @@ class ClipRecorder:
     ) -> None:
         date_str = now.strftime("%Y-%m-%d")
         ts_str = now.strftime("%H%M%S")
-        clip_dir = config.output_dir / date_str / f"track_{track_id}_{ts_str}"
+        clip_dir = config.output_dir / config.camera_id / date_str / f"track_{track_id}_{ts_str}"
         clip_dir.mkdir(parents=True, exist_ok=True)
 
         clip_path = clip_dir / "clip.mp4"
@@ -196,6 +199,7 @@ class ClipRecorder:
             return
 
         _write_metadata(state, ended_at=now, x_range=x_range)
+        upload_clip(state.clip_path.parent)
         logger.info(
             "Finalized track %d — %d frames, %.1fs, x-range %.1fpx → %s",
             track_id,
@@ -240,6 +244,7 @@ def _write_metadata(state: _TrackState, ended_at: datetime, x_range: float = 0.0
     duration = (ended_at - state.started_at).total_seconds()
 
     meta = {
+        "camera_id": config.camera_id,
         "track_id": state.track_id,
         "started_at": state.started_at.isoformat(),
         "ended_at": ended_at.isoformat(),
@@ -273,6 +278,12 @@ def _write_error_metadata(
     }
     with open(metadata_path, "w") as f:
         json.dump(meta, f, indent=2)
+
+
+def _save_thumbnail(frame: np.ndarray, clip_dir: Path) -> None:
+    small = cv2.resize(frame, (640, 360))
+    path = clip_dir / "thumb.jpg"
+    cv2.imwrite(str(path), small, [cv2.IMWRITE_JPEG_QUALITY, 80])
 
 
 def _draw_overlay(frame: np.ndarray, detections: list[Detection]) -> np.ndarray:

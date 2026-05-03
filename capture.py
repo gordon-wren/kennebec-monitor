@@ -70,5 +70,15 @@ class CameraCapture:
         self._buffer.append(frame)
         return True, frame
 
+    def reconnect(self) -> bool:
+        """Re-open the source after a stream failure. Returns True on success."""
+        self.cap.release()
+        if self._is_rtsp:
+            self.cap = cv2.VideoCapture(self._source, cv2.CAP_FFMPEG)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        else:
+            self.cap = cv2.VideoCapture(self._source)
+        return self.cap.isOpened()
+
     def release(self) -> None:
         self.cap.release()

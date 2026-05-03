@@ -7,6 +7,9 @@ from typing import Optional
 class Config:
     # Camera — index 0 is usually the first connected UVC device
     camera_index: int = 0
+    # Stable identifier for this camera — used in clip output paths and R2 keys so
+    # clips from different cameras can be distinguished. Keep it short and URL-safe.
+    camera_id: str = "cam1"
 
     # Output
     output_dir: Path = Path("clips")
@@ -65,6 +68,28 @@ class Config:
     # objects. A pier jitters <50px; a boat crossing the frame spans 200px+.
     # Set to 0.0 to disable.
     min_track_displacement_px: float = 100.0
+
+    # Logging — rotating file log for unattended production use.
+    # Set log_file to an absolute path to enable (e.g. "/var/log/boat-detector/detector.log").
+    # Leave empty to log to stdout only.
+    log_file: str = ""
+    log_max_bytes: int = 10 * 1024 * 1024  # 10 MB per file
+    log_backup_count: int = 5              # keep 5 rotated files
+
+    # Storage — delete clip directories older than this many days on startup.
+    # Set to 0 to disable. Applies to config.output_dir only, not test_clips/.
+    max_clip_age_days: int = 365
+
+    # RTSP reconnect — seconds to wait between reconnect attempts (doubles each retry,
+    # capped at max_reconnect_interval_seconds).
+    reconnect_interval_seconds: float = 5.0
+    max_reconnect_interval_seconds: float = 60.0
+
+    # Cloudflare R2 upload — populate these and set R2_ACCESS_KEY / R2_SECRET_KEY
+    # as environment variables, then flip r2_upload_enabled to True.
+    r2_upload_enabled: bool = False
+    r2_bucket: str = ""
+    r2_endpoint: str = ""  # https://<account_id>.r2.cloudflarestorage.com
 
     # Development toggles — leave False for production
     draw_overlay: bool = False   # burn bounding boxes and track IDs into saved clips
