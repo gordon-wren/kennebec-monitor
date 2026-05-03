@@ -47,8 +47,8 @@ def analyze(run_dir: Path, expected: int | None) -> None:
     print(f"\n{'═' * 62}")
     print(f"  Run: {run_dir}")
     print(f"{'═' * 62}")
-    print(f"  {'Track':<8} {'Started':<10} {'Duration':<10} {'Detections':<12} {'Conf mean':<10} {'Error'}")
-    print(f"  {'-' * 58}")
+    print(f"  {'Track':<8} {'Started':<10} {'Duration':<10} {'Detections':<12} {'Conf mean':<10} {'Displacement':<14} {'Error'}")
+    print(f"  {'-' * 68}")
 
     total_detection_frames = 0
     errored = 0
@@ -59,9 +59,11 @@ def analyze(run_dir: Path, expected: int | None) -> None:
         duration = fmt_duration(c.get("duration_seconds"))
         det = c.get("detection_count", 0)
         conf = f"{c['confidence_mean']:.2f}" if c.get("confidence_mean") else "—"
+        disp_val = c.get("x_range_px") if c.get("x_range_px") is not None else c.get("max_displacement_px")
+        disp = f"{disp_val:.0f}px" if disp_val is not None else "—"
         error = "⚠" if c.get("error") else ""
         track = f"ID:{c.get('track_id', '?')}"
-        print(f"  {track:<8} {time_str:<10} {duration:<10} {det:<12} {conf:<10} {error}")
+        print(f"  {track:<8} {time_str:<10} {duration:<10} {det:<12} {conf:<10} {disp:<14} {error}")
         total_detection_frames += det
         if c.get("error"):
             errored += 1

@@ -49,12 +49,25 @@ class BoatDetector:
         if boxes is None or boxes.id is None:
             return detections
 
+        frame_h, frame_w = frame.shape[:2]
+        frame_area = frame_h * frame_w
+        max_area = config.max_detection_area_fraction * frame_area
+
         for box, track_id, cls_id, conf in zip(
             boxes.xyxy.cpu().numpy(),
             boxes.id.cpu().numpy().astype(int),
             boxes.cls.cpu().numpy().astype(int),
             boxes.conf.cpu().numpy(),
         ):
+            x1, y1, x2, y2 = box
+            bbox_area = (x2 - x1) * (y2 - y1)
+            if bbox_area > max_area:
+                logger.debug(
+                    "Skipping detection (bbox area %.1f%% of frame exceeds %.1f%% limit)",
+                    bbox_area / frame_area * 100,
+                    config.max_detection_area_fraction * 100,
+                )
+                continue
             detections.append(
                 Detection(
                     track_id=int(track_id),

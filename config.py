@@ -32,12 +32,12 @@ class Config:
     device: str = "cpu"
 
     # Recording
-    pre_buffer_seconds: float = 10.0
+    pre_buffer_seconds: float = 20.0
     # How long a track can be absent before its clip is closed.
     # Too short → clips fragment when detection drops (waves, glare, occlusion).
     # Too long  → clips merge when two boats pass close together or one lingers off-frame.
     # For slow-moving vessels, set this to at least the longest expected detection gap.
-    track_loss_timeout_seconds: float = 60.0
+    track_loss_timeout_seconds: float = 30.0
 
     # If a new track ID appears within this fraction of the frame diagonal from a
     # recently-lost track, it is treated as the same object and routed to the existing clip.
@@ -51,6 +51,20 @@ class Config:
     # Range 0.0–0.5; 0.15 = leftmost/rightmost 15% of frame (~288px on 1920px wide).
     # Set to 0.0 to disable and fall back to proximity-only logic.
     edge_entry_zone: float = 0.15
+
+    # Maximum bounding box area as a fraction of the total frame area. Detections larger
+    # than this are discarded before reaching the tracker — catches piers, docks, and
+    # large foreground structures that YOLO misclassifies as boats. A pier that fills
+    # 25% of the frame will be filtered; a boat filling 5–10% will not.
+    # Range 0.0–1.0; set to 1.0 to disable.
+    max_detection_area_fraction: float = 0.10
+
+    # Minimum horizontal x-range (pixels) a track's centroid must span over its lifetime
+    # to be saved. Uses the spread of x-positions (max_cx - min_cx) rather than
+    # displacement from start, making it robust against YOLO bbox jitter on large static
+    # objects. A pier jitters <50px; a boat crossing the frame spans 200px+.
+    # Set to 0.0 to disable.
+    min_track_displacement_px: float = 100.0
 
     # Development toggles — leave False for production
     draw_overlay: bool = False   # burn bounding boxes and track IDs into saved clips

@@ -1,6 +1,7 @@
 import json
 import logging
 import math
+import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +28,10 @@ class _TrackState:
     frame_count: int = 0
     detections: list[Detection] = field(default_factory=list)
     last_bbox: Optional[tuple[float, float, float, float]] = None
+    # Track the spread of centroid x-positions to detect real horizontal movement.
+    # Jitter on a static pier is typically <50px; a boat crossing the frame is 200px+.
+    cx_min: float = float("inf")
+    cx_max: float = float("-inf")
     error: Optional[str] = None
 
 
@@ -102,6 +107,9 @@ class ClipRecorder:
                 state.last_bbox = det.bbox_xyxy
                 state.detections.append(det)
                 self._last_lost_log.pop(track_id, None)
+                cx = (det.bbox_xyxy[0] + det.bbox_xyxy[2]) / 2
+                state.cx_min = min(state.cx_min, cx)
+                state.cx_max = max(state.cx_max, cx)
             else:
                 absent_for = (now - state.last_seen_at).total_seconds()
                 if absent_for > config.track_loss_timeout_seconds:
@@ -176,12 +184,24 @@ class ClipRecorder:
         for k in stale:
             del self._id_remap[k]
         state.writer.release()
-        _write_metadata(state, ended_at=now)
+
+        x_range = state.cx_max - state.cx_min if state.cx_max != float("-inf") else 0.0
+        threshold = config.min_track_displacement_px
+        if threshold > 0 and x_range < threshold:
+            logger.info(
+                "Discarding track %d — static object (x-range %.1fpx < %.1fpx threshold) → deleting %s",
+                track_id, x_range, threshold, state.clip_path.parent,
+            )
+            shutil.rmtree(state.clip_path.parent, ignore_errors=True)
+            return
+
+        _write_metadata(state, ended_at=now, x_range=x_range)
         logger.info(
-            "Finalized track %d — %d frames, %.1fs → %s",
+            "Finalized track %d — %d frames, %.1fs, x-range %.1fpx → %s",
             track_id,
             state.frame_count,
             (now - state.started_at).total_seconds(),
+            x_range,
             state.clip_path,
         )
 
@@ -215,7 +235,7 @@ class ClipRecorder:
 
 # ------------------------------------------------------------------ helpers
 
-def _write_metadata(state: _TrackState, ended_at: datetime) -> None:
+def _write_metadata(state: _TrackState, ended_at: datetime, x_range: float = 0.0) -> None:
     confs = [d.confidence for d in state.detections]
     duration = (ended_at - state.started_at).total_seconds()
 
@@ -233,6 +253,7 @@ def _write_metadata(state: _TrackState, ended_at: datetime) -> None:
         "confidence_min": round(min(confs), 4) if confs else None,
         "confidence_max": round(max(confs), 4) if confs else None,
         "confidence_mean": round(sum(confs) / len(confs), 4) if confs else None,
+        "x_range_px": round(x_range, 1),
         "error": state.error,
     }
     with open(state.metadata_path, "w") as f:
