@@ -19,7 +19,15 @@ class CameraCapture:
             source = config.camera_index
 
         self._source = source
-        self.cap = cv2.VideoCapture(str(source) if isinstance(source, Path) else source)
+        self._is_rtsp = isinstance(source, str) and source.startswith("rtsp://")
+
+        if self._is_rtsp:
+            # FFmpeg backend is more reliable for network streams than OpenCV's default.
+            # Buffer size of 1 ensures we always read the latest frame rather than queuing stale ones.
+            self.cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        else:
+            self.cap = cv2.VideoCapture(str(source) if isinstance(source, Path) else source)
 
         if not self.cap.isOpened():
             if isinstance(source, int):
@@ -28,11 +36,20 @@ class CameraCapture:
                     "Check that the Sony camera is connected in USB Streaming mode, "
                     "or that your capture card is recognized by the OS."
                 )
+            if self._is_rtsp:
+                raise RuntimeError(
+                    f"Cannot connect to RTSP stream: {source}. "
+                    "Check the camera IP, credentials, and that the camera is reachable on the network."
+                )
             raise RuntimeError(f"Cannot open video file: {source}")
 
         raw_fps = self.cap.get(cv2.CAP_PROP_FPS)
         # Sony cameras over USB streaming sometimes report 0 — default to 30
         self.fps: float = raw_fps if raw_fps > 0 else 30.0
+
+        raw_total = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        # Live cameras report 0 or -1 — only meaningful for file sources
+        self.total_frames: int | None = raw_total if raw_total > 0 else None
 
         pre_buffer_frames = int(self.fps * config.pre_buffer_seconds)
         self._buffer: deque[np.ndarray] = deque(maxlen=pre_buffer_frames)

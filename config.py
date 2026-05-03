@@ -17,17 +17,40 @@ class Config:
     # Detection
     # COCO class 8 = "boat" — set to None to track all detected object classes
     model_name: str = "yolo11s.pt"
-    confidence_threshold: float = 0.35
+    # Pass low-confidence detections through to BoT-SORT so its second-stage
+    # matching can use them to keep existing tracks alive. The tracker's own
+    # track_high_thresh / track_low_thresh in tracker.yaml control how they're used.
+    confidence_threshold: float = 0.1
+
+    # Run YOLO inference only every N frames. All frames are still written to clips
+    # for smooth video output. Higher values improve performance but reduce detection
+    # responsiveness — for slow vessels, 3–5 is a good starting point.
+    # 1 = every frame (no skipping).
+    inference_every_n_frames: int = 6
     target_classes: Optional[list[int]] = field(default_factory=lambda: [8])
     # "cpu" for Intel; "mps" for Apple Silicon (M-series)
     device: str = "cpu"
 
     # Recording
     pre_buffer_seconds: float = 10.0
-    # NOTE: 5 seconds is a starting point and will likely need tuning per deployment.
-    # Too short → clips fragment when detection briefly drops (waves, glare, occlusion).
+    # How long a track can be absent before its clip is closed.
+    # Too short → clips fragment when detection drops (waves, glare, occlusion).
     # Too long  → clips merge when two boats pass close together or one lingers off-frame.
-    track_loss_timeout_seconds: float = 5.0
+    # For slow-moving vessels, set this to at least the longest expected detection gap.
+    track_loss_timeout_seconds: float = 60.0
+
+    # If a new track ID appears within this fraction of the frame diagonal from a
+    # recently-lost track, it is treated as the same object and routed to the existing clip.
+    # Handles cases where BoT-SORT drops and reassigns IDs despite a large track_buffer.
+    # Range 0.0–1.0; 0.25 = 25% of frame diagonal (~480px on 1080p).
+    track_merge_proximity: float = 0.25
+
+    # Boats enter the frame from the left or right edge. A new track ID appearing within
+    # this fraction of frame width from either edge is treated as a genuine new entry and
+    # is never merged into an existing clip, regardless of proximity.
+    # Range 0.0–0.5; 0.15 = leftmost/rightmost 15% of frame (~288px on 1920px wide).
+    # Set to 0.0 to disable and fall back to proximity-only logic.
+    edge_entry_zone: float = 0.15
 
     # Development toggles — leave False for production
     draw_overlay: bool = False   # burn bounding boxes and track IDs into saved clips

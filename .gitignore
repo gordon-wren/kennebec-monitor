@@ -23,6 +23,7 @@ MANIFEST
 
 # Output — clips and snapshots are runtime artifacts
 clips/
+test_clips/
 
 # macOS
 .DS_Store

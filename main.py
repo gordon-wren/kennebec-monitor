@@ -23,11 +23,39 @@ logging.getLogger("torch").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
-def run(input_path: Path | None = None, background_frames: bool = False) -> None:
-    config.output_dir.mkdir(parents=True, exist_ok=True)
+def _check_terminal() -> None:
+    import os
+    term = os.environ.get("TERM_PROGRAM", "")
+    if term != "iTerm.app":
+        logger.warning(
+            "Inline frame printing requires iTerm2 (detected: %s). "
+            "Frames will be written but not visible. Download iTerm2 at https://iterm2.com",
+            term or "unknown",
+        )
+
+
+def _next_test_run_dir() -> Path:
+    base = Path("test_clips")
+    base.mkdir(exist_ok=True)
+    existing = sorted(p for p in base.iterdir() if p.is_dir() and p.name.startswith("run_"))
+    n = int(existing[-1].name.split("_")[1]) + 1 if existing else 1
+    return base / f"run_{n:03d}"
+
+
+def run(
+    input_path: Path | None = None,
+    camera_url: str | None = None,
+    background_frames: bool = False,
+) -> None:
+    _check_terminal()
 
     file_mode = input_path is not None
-    source = input_path if file_mode else None
+    source = input_path or camera_url or None
+
+    if file_mode:
+        config.output_dir = _next_test_run_dir()
+
+    config.output_dir.mkdir(parents=True, exist_ok=True)
 
     camera = CameraCapture(source=source)
     detector = BoatDetector()
@@ -46,25 +74,25 @@ def run(input_path: Path | None = None, background_frames: bool = False) -> None
     if file_mode:
         logger.info(
             "Test mode — input=%s fps=%.1f device=%s classes=%s output=%s",
-            input_path,
-            camera.fps,
-            config.device,
-            config.target_classes,
-            config.output_dir,
+            input_path, camera.fps, config.device, config.target_classes, config.output_dir,
+        )
+    elif camera_url:
+        logger.info(
+            "Live mode (RTSP) — url=%s fps=%.1f device=%s classes=%s output=%s",
+            camera_url, camera.fps, config.device, config.target_classes, config.output_dir,
         )
     else:
         logger.info(
             "Live mode — fps=%.1f device=%s classes=%s output=%s",
-            camera.fps,
-            config.device,
-            config.target_classes,
-            config.output_dir,
+            camera.fps, config.device, config.target_classes, config.output_dir,
         )
 
     frame_count = 0
-    last_heartbeat = time.monotonic()
-    last_snapshot = time.monotonic()
+    run_start = time.monotonic()
+    last_heartbeat = run_start
+    last_snapshot = run_start
     known_track_ids: set[int] = set()
+    last_detections: list = []
 
     while True:
         # Snapshot must come before read() so the current frame isn't in the pre-buffer
@@ -80,10 +108,14 @@ def run(input_path: Path | None = None, background_frames: bool = False) -> None
 
         frame_count += 1
 
-        try:
-            detections = detector.detect(frame)
-        except Exception as exc:
-            logger.warning("Detection failed on frame, skipping: %s", exc)
+        if frame_count % config.inference_every_n_frames == 0:
+            try:
+                last_detections = detector.detect(frame)
+            except Exception as exc:
+                logger.warning("Detection failed on frame, skipping: %s", exc)
+                last_detections = []
+            detections = last_detections
+        else:
             detections = []
 
         # Notify on new track IDs
@@ -98,12 +130,22 @@ def run(input_path: Path | None = None, background_frames: bool = False) -> None
 
         # Heartbeat every 10 seconds, only when no new tracks have fired recently
         elif now_mono - last_heartbeat >= 10.0:
-            logger.debug(
-                "frame=%d | detections=%d | active_tracks=%d",
-                frame_count,
-                len(detections),
-                recorder.active_track_count,
-            )
+            elapsed = now_mono - run_start
+            video_seconds = frame_count / camera.fps
+            if file_mode and camera.total_frames:
+                progress = frame_count / camera.total_frames * 100
+                logger.debug(
+                    "frame=%d/%d (%.1f%%) | video=%.1fs | elapsed=%.1fs | detections=%d | active_tracks=%d",
+                    frame_count, camera.total_frames, progress,
+                    video_seconds, elapsed,
+                    len(detections), recorder.active_track_count,
+                )
+            else:
+                logger.debug(
+                    "frame=%d | elapsed=%.1fs | detections=%d | active_tracks=%d",
+                    frame_count, elapsed,
+                    len(detections), recorder.active_track_count,
+                )
             last_heartbeat = now_mono
 
         try:
@@ -190,6 +232,13 @@ if __name__ == "__main__":
         help="Path to a video file for test mode. Omit to use the live camera.",
     )
     parser.add_argument(
+        "--camera", "-c",
+        type=str,
+        default=None,
+        metavar="RTSP_URL",
+        help="RTSP URL of an IP camera, e.g. rtsp://admin:pass@192.168.1.100:554/h264Preview_01_main",
+    )
+    parser.add_argument(
         "--background-frames",
         action="store_true",
         default=False,
@@ -199,5 +248,7 @@ if __name__ == "__main__":
 
     if args.input is not None and not args.input.exists():
         parser.error(f"Input file not found: {args.input}")
+    if args.input and args.camera:
+        parser.error("--input and --camera are mutually exclusive")
 
-    run(input_path=args.input, background_frames=args.background_frames)
+    run(input_path=args.input, camera_url=args.camera, background_frames=args.background_frames)

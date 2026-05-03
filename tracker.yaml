@@ -1,13 +1,16 @@
 tracker_type: botsort
 
-# Lowered from default 0.25 to match our confidence_threshold
+# High-confidence detections: used for first-stage matching and starting new tracks.
+# Low-confidence detections: used for second-stage matching to rescue fading tracks.
+# config.py confidence_threshold must be <= track_low_thresh so weak detections
+# actually reach the tracker rather than being filtered out before it.
 track_high_thresh: 0.35
 track_low_thresh: 0.1
 new_track_thresh: 0.4
 
-# At 30fps: 150 = 5s, 300 = 10s. Increase if boats are being re-IDed after
-# brief detection gaps (waves, glare, partial occlusion).
-track_buffer: 150
+# At 30fps: 150 = 5s, 300 = 10s, 1800 = 60s. Keep large enough that BoT-SORT
+# maintains track IDs through the longest expected detection gap for slow vessels.
+track_buffer: 1800
 
 match_thresh: 0.8
 fuse_score: true

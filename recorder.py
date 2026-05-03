@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,6 +26,7 @@ class _TrackState:
     fps: float
     frame_count: int = 0
     detections: list[Detection] = field(default_factory=list)
+    last_bbox: Optional[tuple[float, float, float, float]] = None
     error: Optional[str] = None
 
 
@@ -32,6 +34,9 @@ class ClipRecorder:
     def __init__(self, fps: float) -> None:
         self.fps = fps
         self._active: dict[int, _TrackState] = {}
+        # Maps a new BoT-SORT track ID to the canonical ID of an existing clip when
+        # spatial proximity suggests it's the same physical object re-identified.
+        self._id_remap: dict[int, int] = {}
         self._last_lost_log: dict[int, datetime] = {}
 
     @property
@@ -45,15 +50,41 @@ class ClipRecorder:
         pre_buffer: list[np.ndarray],
     ) -> None:
         now = datetime.now(timezone.utc)
-        visible_ids = {d.track_id for d in detections}
+
+        # Resolve any remapped IDs before processing
+        resolved = [
+            Detection(
+                track_id=self._id_remap.get(d.track_id, d.track_id),
+                class_id=d.class_id,
+                class_name=d.class_name,
+                confidence=d.confidence,
+                bbox_xyxy=d.bbox_xyxy,
+            )
+            for d in detections
+        ]
+        visible_ids = {d.track_id for d in resolved}
 
         # Render overlay once and reuse across all writers this frame
-        out_frame = _draw_overlay(frame, detections) if config.draw_overlay else frame
+        out_frame = _draw_overlay(frame, resolved) if config.draw_overlay else frame
 
-        # Open a new clip for any track ID we haven't seen before
-        for det in detections:
+        # Open a new clip for any track ID we haven't seen before,
+        # or remap to an existing clip if spatially close to a lost track.
+        # Only consider tracks that are lost this frame (not in visible_ids) as merge
+        # candidates — we must never merge a new boat into a clip for a different boat
+        # that is still actively visible in the same frame.
+        for det in resolved:
             if det.track_id not in self._active:
-                self._start_track(det.track_id, now, pre_buffer, frame.shape)
+                canonical = self._find_nearby_lost_track(det.bbox_xyxy, frame.shape, visible_ids)
+                if canonical is not None:
+                    logger.info(
+                        "Track %d merged into existing clip for track %d (proximity re-ID)",
+                        det.track_id, canonical,
+                    )
+                    self._id_remap[det.track_id] = canonical
+                    # Update the canonical state so it's treated as visible again
+                    self._active[canonical].last_seen_at = now
+                else:
+                    self._start_track(det.track_id, now, pre_buffer, frame.shape)
 
         # Write the current frame to every open clip and check for timeouts
         for track_id in list(self._active.keys()):
@@ -66,8 +97,9 @@ class ClipRecorder:
                 logger.error("Frame write failed for track %d: %s", track_id, exc)
 
             if track_id in visible_ids:
-                det = next(d for d in detections if d.track_id == track_id)
+                det = next(d for d in resolved if d.track_id == track_id)
                 state.last_seen_at = now
+                state.last_bbox = det.bbox_xyxy
                 state.detections.append(det)
                 self._last_lost_log.pop(track_id, None)
             else:
@@ -139,6 +171,10 @@ class ClipRecorder:
     def _finalize_track(self, track_id: int, now: datetime) -> None:
         state = self._active.pop(track_id)
         self._last_lost_log.pop(track_id, None)
+        # Remove any remaps that pointed to this canonical ID
+        stale = [k for k, v in self._id_remap.items() if v == track_id]
+        for k in stale:
+            del self._id_remap[k]
         state.writer.release()
         _write_metadata(state, ended_at=now)
         logger.info(
@@ -148,6 +184,33 @@ class ClipRecorder:
             (now - state.started_at).total_seconds(),
             state.clip_path,
         )
+
+    def _find_nearby_lost_track(
+        self,
+        bbox: tuple[float, float, float, float],
+        frame_shape: tuple,
+        visible_ids: set[int],
+    ) -> Optional[int]:
+        """Return the canonical track ID of any lost (not currently visible) active track
+        whose last known position is within config.track_merge_proximity of bbox.
+        Returns None if no match. visible_ids excludes currently-tracked objects so we
+        never merge a genuinely new boat into a clip for a different boat still in frame."""
+        h, w = frame_shape[:2]
+        frame_diag = math.sqrt(w ** 2 + h ** 2)
+        cx = (bbox[0] + bbox[2]) / 2
+        cy = (bbox[1] + bbox[3]) / 2
+
+        for track_id, state in self._active.items():
+            if track_id in visible_ids:
+                continue  # skip tracks still actively visible this frame
+            if state.last_bbox is None:
+                continue
+            lx = (state.last_bbox[0] + state.last_bbox[2]) / 2
+            ly = (state.last_bbox[1] + state.last_bbox[3]) / 2
+            dist = math.sqrt((cx - lx) ** 2 + (cy - ly) ** 2)
+            if dist / frame_diag <= config.track_merge_proximity:
+                return track_id
+        return None
 
 
 # ------------------------------------------------------------------ helpers
