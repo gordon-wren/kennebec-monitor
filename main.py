@@ -13,6 +13,7 @@ import cv2
 from capture import CameraCapture
 from config import config
 from detector import BoatDetector
+from notifier import notify_detection
 from recorder import ClipRecorder, _draw_overlay
 
 _fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -48,6 +49,31 @@ def _check_terminal() -> None:
             "Frames will be written but not visible. Download iTerm2 at https://iterm2.com",
             term or "unknown",
         )
+
+
+def _touch_watchdog() -> None:
+    if not config.watchdog_file:
+        return
+    try:
+        p = Path(config.watchdog_file)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(datetime.now(timezone.utc).isoformat())
+    except Exception as exc:
+        logger.warning("Failed to write watchdog file: %s", exc)
+
+
+def _log_session_summary(recorder, run_start: float) -> None:
+    elapsed = time.monotonic() - run_start
+    m, s = divmod(int(elapsed), 60)
+    h, m = divmod(m, 60)
+    uptime = f"{h}h {m:02d}m {s:02d}s" if h else f"{m}m {s:02d}s"
+    st = recorder.stats
+    logger.info(
+        "Session summary — uptime: %s | clips saved: %d | clips discarded: %d"
+        " | detections: %d | vessel time: %.0fs",
+        uptime, st.clips_saved, st.clips_discarded,
+        st.total_detections, st.total_vessel_seconds,
+    )
 
 
 def _cleanup_old_clips(output_dir: Path) -> None:
@@ -97,6 +123,7 @@ def run(
     def _shutdown(sig, frame):
         logger.info("Shutting down — flushing open clips")
         recorder.flush_all()
+        _log_session_summary(recorder, run_start)
         camera.release()
         cv2.destroyAllWindows()
         sys.exit(0)
@@ -167,12 +194,14 @@ def run(
         # Notify on new track IDs
         now_mono = time.monotonic()
         new_ids = {d.track_id for d in detections} - known_track_ids
+        _touch_watchdog()
+
         if new_ids:
             new_detections = [d for d in detections if d.track_id in new_ids]
             _notify_detection(frame, new_detections, frame_count)
             known_track_ids.update(new_ids)
-            last_snapshot = now_mono  # reset background timer to avoid double-print
-            last_heartbeat = now_mono  # reset heartbeat so it doesn't fire immediately after
+            last_snapshot = now_mono
+            last_heartbeat = now_mono
 
         # Heartbeat every 10 seconds, only when no new tracks have fired recently
         elif now_mono - last_heartbeat >= 10.0:
@@ -211,19 +240,20 @@ def run(
                 break
 
     recorder.flush_all()
+    _log_session_summary(recorder, run_start)
     camera.release()
     cv2.destroyAllWindows()
 
 
 def _notify_detection(frame: "cv2.Mat", detections: list, frame_count: int) -> None:
-    """Called once per new track ID. Extend this function to add push notifications,
-    webhooks, alerts, etc. alongside the terminal output."""
+    """Called once per new track ID."""
     for d in detections:
         logger.info(
             "--- BOAT DETECTED --- %s ID:%d conf:%.2f (frame %d)",
             d.class_name, d.track_id, d.confidence, frame_count,
         )
     _print_frame(frame, detections, frame_count)
+    notify_detection(frame, detections)
 
 
 def _print_frame(frame: "cv2.Mat", detections: list, frame_count: int) -> None:

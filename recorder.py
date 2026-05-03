@@ -36,14 +36,21 @@ class _TrackState:
     error: Optional[str] = None
 
 
+@dataclass
+class SessionStats:
+    clips_saved: int = 0
+    clips_discarded: int = 0
+    total_detections: int = 0
+    total_vessel_seconds: float = 0.0
+
+
 class ClipRecorder:
     def __init__(self, fps: float) -> None:
         self.fps = fps
         self._active: dict[int, _TrackState] = {}
-        # Maps a new BoT-SORT track ID to the canonical ID of an existing clip when
-        # spatial proximity suggests it's the same physical object re-identified.
         self._id_remap: dict[int, int] = {}
         self._last_lost_log: dict[int, datetime] = {}
+        self.stats = SessionStats()
 
     @property
     def active_track_count(self) -> int:
@@ -112,7 +119,7 @@ class ClipRecorder:
                 state.cx_min = min(state.cx_min, cx)
                 state.cx_max = max(state.cx_max, cx)
                 if len(state.detections) == 1:
-                    _save_thumbnail(frame, state.clip_path.parent)
+                    _save_thumbnail(frame, state.clip_path.parent, resolved)
             else:
                 absent_for = (now - state.last_seen_at).total_seconds()
                 if absent_for > config.track_loss_timeout_seconds:
@@ -196,15 +203,23 @@ class ClipRecorder:
                 track_id, x_range, threshold, state.clip_path.parent,
             )
             shutil.rmtree(state.clip_path.parent, ignore_errors=True)
+            self.stats.clips_discarded += 1
             return
 
+        duration = (now - state.started_at).total_seconds()
         _write_metadata(state, ended_at=now, x_range=x_range)
+        _update_daily_summary(state, ended_at=now, duration=duration)
         upload_clip(state.clip_path.parent)
+
+        self.stats.clips_saved += 1
+        self.stats.total_detections += len(state.detections)
+        self.stats.total_vessel_seconds += duration
+
         logger.info(
             "Finalized track %d — %d frames, %.1fs, x-range %.1fpx → %s",
             track_id,
             state.frame_count,
-            (now - state.started_at).total_seconds(),
+            duration,
             x_range,
             state.clip_path,
         )
@@ -280,10 +295,91 @@ def _write_error_metadata(
         json.dump(meta, f, indent=2)
 
 
-def _save_thumbnail(frame: np.ndarray, clip_dir: Path) -> None:
-    small = cv2.resize(frame, (640, 360))
-    path = clip_dir / "thumb.jpg"
-    cv2.imwrite(str(path), small, [cv2.IMWRITE_JPEG_QUALITY, 80])
+def _update_daily_summary(state: _TrackState, ended_at: datetime, duration: float) -> None:
+    """Write or update a summary.json for the day this clip belongs to."""
+    date_str = state.started_at.strftime("%Y-%m-%d")
+    summary_path = state.clip_path.parent.parent / "summary.json"
+
+    existing: dict = {}
+    if summary_path.exists():
+        try:
+            with open(summary_path) as f:
+                existing = json.load(f)
+        except Exception:
+            existing = {}
+
+    confs = [d.confidence for d in state.detections]
+    all_confs = existing.get("_confidence_sum_scratch", 0.0) + sum(confs)
+    all_conf_count = existing.get("_confidence_count_scratch", 0) + len(confs)
+
+    summary = {
+        "date": date_str,
+        "camera_id": config.camera_id,
+        "clips_saved": existing.get("clips_saved", 0) + 1,
+        "total_detections": existing.get("total_detections", 0) + len(state.detections),
+        "total_vessel_seconds": round(existing.get("total_vessel_seconds", 0.0) + duration, 1),
+        "confidence_mean": round(all_confs / all_conf_count, 4) if all_conf_count else None,
+        "first_vessel_at": existing.get("first_vessel_at") or state.started_at.isoformat(),
+        "last_vessel_at": ended_at.isoformat(),
+        "updated_at": ended_at.isoformat(),
+        # scratch fields for incremental confidence averaging — not for external consumption
+        "_confidence_sum_scratch": all_confs,
+        "_confidence_count_scratch": all_conf_count,
+    }
+    with open(summary_path, "w") as f:
+        json.dump(summary, f, indent=2)
+    from uploader import upload_clip as _uc  # local import to avoid circular at module level
+    from uploader import clip_id as _cid
+    # Upload the summary alongside the clips (re-use the same prefix, different filename)
+    if config.r2_upload_enabled:
+        import threading
+        threading.Thread(
+            target=_upload_summary, args=(summary_path, date_str), daemon=True
+        ).start()
+
+
+def _upload_summary(summary_path: Path, date_str: str) -> None:
+    try:
+        import boto3, os
+        from botocore.config import Config as BotoConfig
+        client = boto3.client(
+            "s3",
+            endpoint_url=config.r2_endpoint,
+            aws_access_key_id=os.environ.get("R2_ACCESS_KEY", ""),
+            aws_secret_access_key=os.environ.get("R2_SECRET_KEY", ""),
+            config=BotoConfig(signature_version="s3v4"),
+            region_name="auto",
+        )
+        key = f"summaries/{config.camera_id}/{date_str}/summary.json"
+        client.upload_file(str(summary_path), config.r2_bucket, key)
+        logger.debug("Uploaded daily summary → r2://%s/%s", config.r2_bucket, key)
+    except Exception as exc:
+        logger.warning("Failed to upload daily summary: %s", exc)
+
+
+def _save_thumbnail(frame: np.ndarray, clip_dir: Path, detections: list[Detection]) -> None:
+    thumb_w, thumb_h = 640, 360
+    small = cv2.resize(frame, (thumb_w, thumb_h))
+    if detections:
+        sx = thumb_w / frame.shape[1]
+        sy = thumb_h / frame.shape[0]
+        scaled = [
+            Detection(
+                track_id=d.track_id,
+                class_id=d.class_id,
+                class_name=d.class_name,
+                confidence=d.confidence,
+                bbox_xyxy=(
+                    d.bbox_xyxy[0] * sx,
+                    d.bbox_xyxy[1] * sy,
+                    d.bbox_xyxy[2] * sx,
+                    d.bbox_xyxy[3] * sy,
+                ),
+            )
+            for d in detections
+        ]
+        small = _draw_overlay(small, scaled)
+    cv2.imwrite(str(clip_dir / "thumb.jpg"), small, [cv2.IMWRITE_JPEG_QUALITY, 80])
 
 
 def _draw_overlay(frame: np.ndarray, detections: list[Detection]) -> np.ndarray:

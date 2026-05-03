@@ -69,6 +69,13 @@ class Config:
     # Set to 0.0 to disable.
     min_track_displacement_px: float = 100.0
 
+    # Health watchdog — write a timestamp to this file every heartbeat cycle.
+    # An external cron job can alert if the file goes stale (e.g. older than 5 minutes).
+    # Leave empty to disable.
+    # Example cron check (add to crontab -e):
+    #   */5 * * * * find /tmp/boat-detector.watchdog -mmin +5 && echo "detector may be down"
+    watchdog_file: str = ""
+
     # Logging — rotating file log for unattended production use.
     # Set log_file to an absolute path to enable (e.g. "/var/log/boat-detector/detector.log").
     # Leave empty to log to stdout only.
@@ -84,6 +91,22 @@ class Config:
     # capped at max_reconnect_interval_seconds).
     reconnect_interval_seconds: float = 5.0
     max_reconnect_interval_seconds: float = 60.0
+
+    # Notifications — fired once per new track ID (new boat detection).
+    # Supported providers: "ntfy", "webhook" (set notify_provider accordingly).
+    #
+    # ntfy  — free push notifications, no account required.
+    #   1. Pick a secret topic name (treat it like a password).
+    #   2. Set notify_ntfy_url = "https://ntfy.sh/<your-topic>"
+    #   3. Install the ntfy app on your phone and subscribe to the same topic.
+    #
+    # webhook — POST JSON payload to any URL (Zapier, Make.com, custom endpoint).
+    #   Set notify_webhook_url to your endpoint.
+    notify_enabled: bool = False
+    notify_provider: str = "ntfy"        # "ntfy" | "webhook"
+    notify_ntfy_url: str = ""            # https://ntfy.sh/<topic>
+    notify_webhook_url: str = ""         # https://your-endpoint.example.com/hook
+    notify_min_confidence: float = 0.35  # skip notification if all detections below this
 
     # Cloudflare R2 upload — populate these and set R2_ACCESS_KEY / R2_SECRET_KEY
     # as environment variables, then flip r2_upload_enabled to True.
