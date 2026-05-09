@@ -28,6 +28,10 @@ class CameraCapture:
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         else:
             self.cap = cv2.VideoCapture(str(source) if isinstance(source, Path) else source)
+            # Honor rotation metadata embedded by phone/camera apps (e.g. iOS .mov files).
+            # OpenCV ignores this tag by default, delivering raw portrait frames for a
+            # landscape-recorded video. RTSP streams from IP cameras don't carry this tag.
+            self.cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)
 
         if not self.cap.isOpened():
             if isinstance(source, int):
