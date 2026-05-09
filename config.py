@@ -1,6 +1,11 @@
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 @dataclass
@@ -114,7 +119,7 @@ class Config:
     # fetches all AIS-transmitting vessels within ±ais_bounding_box_deg of that point.
     ais_enabled: bool = False
     # Option A — AISstream.io cloud API (requires internet, free tier available)
-    ais_api_key: str = ""              # AISstream.io API key
+    ais_api_key: str = field(default_factory=lambda: os.environ.get("AIS_API_KEY", ""))
     # Option B — kennebec-ais-catcher local relay server
     # Set to the server URL to use local RTL-SDR data instead of AISstream.io.
     # Example (same machine): "http://127.0.0.1:8080/vessels"

@@ -143,12 +143,18 @@ All settings are in `config.py`.
 
 ### AIS vessel enrichment
 
-When a new vessel is detected, boat-detector can query [AISstream.io](https://aisstream.io) for any AIS-transmitting vessels near the camera. Results are written to `ais.json` in the clip directory and uploaded to R2 alongside the clip.
+When a new vessel is detected, boat-detector can query [AISstream.io](https://aisstream.io) for any AIS-transmitting vessels near the camera. Sign up for a free API key, then add it to `.env` (copy `.env.example` as a starting point):
+
+```bash
+AIS_API_KEY=your_key_here
+```
+
+ Results are written to `ais.json` in the clip directory and uploaded to R2 alongside the clip.
 
 | Setting | Default | Description |
 |---|---|---|
 | `ais_enabled` | `False` | Set to `True` to enable AIS queries |
-| `ais_api_key` | `""` | AISstream.io API key (free tier available) |
+| `ais_api_key` | env `AIS_API_KEY` | AISstream.io API key — set in `.env`, not `config.py` |
 | `camera_latitude` | `0.0` | Camera latitude in decimal degrees |
 | `camera_longitude` | `0.0` | Camera longitude in decimal degrees |
 | `ais_bounding_box_deg` | `0.05` | Half-width of the query bounding box in degrees (~5.5 km at mid-latitudes) |
@@ -185,6 +191,22 @@ AIS only covers vessels that carry an AIS transponder — commercially required 
 
 > **Option B — RTL-SDR local receiver:** For offline or low-latency AIS decoding without a cloud API, see the companion project [`kennebec-ais-catcher`](../kennebec-ais-catcher). It runs an RTL-SDR USB dongle (~$25) through [AIS-catcher](https://github.com/jvde-github/AIS-catcher) to decode AIS on VHF 161.975 / 162.025 MHz, then serves a REST API on the local network. Set `ais_local_url = "http://127.0.0.1:8080/vessels"` in this project's `config.py` to use it instead of AISstream.io — no `ais_api_key` required. This works entirely offline with zero per-message cost, but requires a VHF antenna with line-of-sight to the river (~10–20 NM range for Class A transponders).
 
+### Notifications
+
+Push a notification once per new track ID (new vessel detection). Two providers are supported.
+
+| Setting | Default | Description |
+|---|---|---|
+| `notify_enabled` | `False` | Set to `True` to enable notifications |
+| `notify_provider` | `"ntfy"` | `"ntfy"` or `"webhook"` |
+| `notify_ntfy_url` | `""` | ntfy topic URL, e.g. `https://ntfy.sh/<your-secret-topic>` |
+| `notify_webhook_url` | `""` | Webhook endpoint URL (Zapier, Make.com, custom) |
+| `notify_min_confidence` | `0.35` | Skip notification if all detections are below this confidence |
+
+**ntfy** — free push notifications, no account required. Pick a secret topic name (treat it like a password), set `notify_ntfy_url = "https://ntfy.sh/<your-topic>"` in `config.py`, and subscribe to the same topic in the [ntfy mobile app](https://ntfy.sh).
+
+**webhook** — set `notify_webhook_url` to any HTTP endpoint. The POST body is the clip's `metadata.json` payload.
+
 ### Upload
 
 | Setting | Default | Description |
@@ -193,11 +215,11 @@ AIS only covers vessels that carry an AIS transponder — commercially required 
 | `r2_bucket` | `""` | R2 bucket name |
 | `r2_endpoint` | `""` | `https://<account_id>.r2.cloudflarestorage.com` |
 
-R2 credentials are read from environment variables — do not put them in `config.py`:
+R2 credentials are read from environment variables — do not put them in `config.py`. Add them to `.env`:
 
 ```bash
-export R2_ACCESS_KEY=your_key_id
-export R2_SECRET_KEY=your_secret
+R2_ACCESS_KEY=your_key_id
+R2_SECRET_KEY=your_secret
 ```
 
 ### Debug
