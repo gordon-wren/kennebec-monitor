@@ -5,19 +5,25 @@ Records a clip for each tracked boat detected in a live or recorded video stream
 ## Requirements
 
 - Python 3.11+
-- macOS on Intel or Apple Silicon (M-series)
+- macOS on Apple Silicon (M-series); Intel supported with `device = "cpu"` in `config.py`
 - A PoE IP camera accessible over RTSP (e.g. Reolink RLC-810A), **or** a pre-recorded video file for test mode
 
 ## Installation
 
+Install [uv](https://docs.astral.sh/uv/) if you haven't already:
+
 ```bash
-cd boat-detector
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-The first run downloads `yolo11s.pt` (~22 MB) automatically.
+Then install the project:
+
+```bash
+cd kennebec-monitor
+uv sync
+```
+
+uv creates an isolated virtual environment and installs all dependencies automatically. The first run also downloads `yolo11s.pt` (~22 MB).
 
 ## Camera setup
 
@@ -32,7 +38,7 @@ rtsp://<user>:<password>@<camera-ip>:554/h264Preview_01_main
 Run:
 
 ```bash
-python main.py --camera rtsp://admin:yourpass@192.168.1.100:554/h264Preview_01_main
+uv run python main.py --camera rtsp://admin:yourpass@192.168.1.100:554/h264Preview_01_main
 ```
 
 ### Test mode — video file
@@ -40,29 +46,29 @@ python main.py --camera rtsp://admin:yourpass@192.168.1.100:554/h264Preview_01_m
 Feed a pre-recorded clip to tune settings without the camera present. Clips are written to a new numbered directory under `test_clips/` so runs don't overwrite each other.
 
 ```bash
-python main.py --input /path/to/footage.mp4
+uv run python main.py --input /path/to/footage.mp4
 ```
 
 Analyse the output against a known boat count:
 
 ```bash
-python analyze_run.py test_clips/run_001 --expected 2
+uv run python analyze_run.py test_clips/run_001 --expected 2
 ```
 
 ## Running
 
 ```bash
 # Live camera (UVC device index 0)
-python main.py
+uv run python main.py
 
 # Live camera (RTSP)
-python main.py --camera rtsp://admin:pass@192.168.1.100:554/h264Preview_01_main
+uv run python main.py --camera rtsp://admin:pass@192.168.1.100:554/h264Preview_01_main
 
 # Test file
-python main.py --input footage.mp4
+uv run python main.py --input footage.mp4
 
 # Test file with periodic background frame prints
-python main.py --input footage.mp4 --background-frames
+uv run python main.py --input footage.mp4 --background-frames
 ```
 
 Stop with `Ctrl+C`. Any open clips are flushed to disk before exit.
@@ -119,8 +125,8 @@ All settings are in `config.py`.
 | `model_name` | `yolo11s.pt` | YOLO model variant — `n` is faster, `m`/`l` more accurate |
 | `confidence_threshold` | `0.1` | Pre-filter before BoT-SORT. Keep low so the tracker's second-stage matcher sees weak detections |
 | `target_classes` | `[8]` | COCO class 8 = boat. `None` detects all classes |
-| `device` | `cpu` | `cpu` for Intel; `mps` for Apple Silicon |
-| `inference_every_n_frames` | `6` | Run YOLO every N frames — all frames still written to clips. Higher values improve CPU performance at the cost of detection responsiveness |
+| `device` | `mps` | `mps` for Apple Silicon; `cpu` for Intel |
+| `inference_every_n_frames` | `3` | Run YOLO every N frames — all frames still written to clips. Higher values improve CPU performance at the cost of detection responsiveness |
 | `max_detection_area_fraction` | `0.10` | Discard detections whose bounding box exceeds this fraction of the frame area. Filters foreground structures (piers, trees) misclassified as boats |
 
 ### Tracking
@@ -139,7 +145,7 @@ All settings are in `config.py`.
 | `pre_buffer_seconds` | `20.0` | Seconds of footage prepended to each clip before the first detection |
 | `output_dir` | `clips` | Root directory for saved clips |
 | `output_resolution` | `(1920, 1080)` | Recording resolution |
-| `video_codec` | `mp4v` | `avc1` gives smaller H.264 files on macOS |
+| `video_codec` | `avc1` | `avc1` = H.264 on macOS (smaller files); `mp4v` for cross-platform |
 
 ### AIS vessel enrichment
 
@@ -232,11 +238,11 @@ R2_SECRET_KEY=your_secret
 
 ## Apple Silicon
 
-Change `device` to `mps` in `config.py` for GPU-accelerated inference on M-series Macs. You can also lower `inference_every_n_frames` to `2` or `3` for more responsive detection:
+`config.py` defaults to `device = "mps"` and `inference_every_n_frames = 3` for Apple Silicon. On Intel Macs, switch back to:
 
 ```python
-device: str = "mps"
-inference_every_n_frames: int = 3
+device: str = "cpu"
+inference_every_n_frames: int = 6
 ```
 
 ## Troubleshooting

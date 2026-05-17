@@ -19,8 +19,8 @@ class Config:
     # Output
     output_dir: Path = Path("clips")
     output_resolution: tuple[int, int] = (1920, 1080)
-    # "mp4v" is safe on all platforms; swap to "avc1" on macOS for H.264 (smaller files)
-    video_codec: str = "mp4v"
+    # "avc1" = H.264 hardware encoding on macOS (smaller files); "mp4v" for cross-platform
+    video_codec: str = "avc1"
 
     # Detection
     # COCO class 8 = "boat" — set to None to track all detected object classes
@@ -34,10 +34,10 @@ class Config:
     # for smooth video output. Higher values improve performance but reduce detection
     # responsiveness — for slow vessels, 3–5 is a good starting point.
     # 1 = every frame (no skipping).
-    inference_every_n_frames: int = 6
+    inference_every_n_frames: int = 3
     target_classes: Optional[list[int]] = field(default_factory=lambda: [8])
-    # "cpu" for Intel; "mps" for Apple Silicon (M-series)
-    device: str = "cpu"
+    # "mps" for Apple Silicon (M-series); "cpu" for Intel
+    device: str = "mps"
 
     # Recording
     pre_buffer_seconds: float = 20.0
